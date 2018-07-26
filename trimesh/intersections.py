@@ -230,6 +230,9 @@ def mesh_multiplane(mesh,
     # reconstruct transforms for each 2D section
     base_transform = geometry.plane_transform(origin=plane_origin,
                                               normal=plane_normal)
+    # For normals other than +Z, sometimes the translations have the wrong sign.
+    transformed_z = np.dot(base_transform, [0, 0, 1, 0])[:3]
+    positive = np.dot(plane_normal, transformed_z) > 0
     # alter translation Z inside loop
     translation = np.eye(4)
 
@@ -252,7 +255,8 @@ def mesh_multiplane(mesh,
                                   cached_dots=new_dots)
 
         # get the transforms to 3D space and back
-        translation[2, 3] = height
+        translation[2, 3] = height if positive else -height
+        # translation[0:3, 3] = np.array(plane_normal) * height
         to_3D = np.dot(base_transform, translation)
         to_2D = np.linalg.inv(to_3D)
         transforms.append(to_3D)
@@ -264,7 +268,9 @@ def mesh_multiplane(mesh,
 
         # if we didn't screw up the transform all
         # of the Z values should be zero
-        assert np.allclose(lines_2D[:, 2], 0.0)
+        assert np.allclose(lines_2D[:, 2], 0.0), "Transform failed on normal " +\
+                                                 np.array_str(plane_normal, suppress_small=True, precision=3) +\
+                                                 " with positive set to " + str(positive)
 
         # reshape back in to lines and discard Z
         lines_2D = lines_2D[:, :2].reshape((-1, 2, 2))
