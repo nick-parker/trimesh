@@ -3,10 +3,12 @@ try:
 except BaseException:
     import generic as g
 
+from math import sin, cos, pi
+import numpy as np
 
 class SectionTest(g.unittest.TestCase):
 
-    def test_section(self):
+    def check_normal(self, plane_normal):
         mesh = g.get_mesh('featuretype.STL')
         # this hits many edge cases
         step = .125
@@ -107,6 +109,16 @@ class SectionTest(g.unittest.TestCase):
                 # make sure reconstruction is at z of frame
                 assert g.np.isclose(back_3D.vertices[:, 2].mean(),
                                     z_levels[index])
+
+    def test_section(self):
+        """
+        Test section algorithm with slices in several directions.
+        """
+        d = 4
+        normals = [[sin(phi*pi/4)*sin(theta*pi/d), sin(phi*pi/d)*cos(theta*pi/d), cos(phi*pi/d)]
+                   for theta in range(0, d*2) for phi in range(0, d)]
+        for plane_normal in normals:
+            self.check_normal(plane_normal)
 
 
 class PlaneLine(g.unittest.TestCase):
