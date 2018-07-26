@@ -1140,16 +1140,20 @@ def submesh(mesh,
 
     Parameters
     ----------
-    mesh: Trimesh object
-    faces_sequence: sequence of face indices from mesh
-    only_watertight: only return submeshes which are watertight.
-    append: return a single mesh which has the faces specified appended.
-            if this flag is set, only_watertight is ignored
+    mesh : Trimesh
+       Source mesh to take geometry from
+    faces_sequence : sequence (p,) int
+        Indexes of mesh.faces
+    only_watertight : bool
+        Only return submeshes which are watertight.
+    append : bool
+        Return a single mesh which has the faces appended,
+        if this flag is set, only_watertight is ignored
 
     Returns
     ---------
-    if append: Trimesh object
-    else:      list of Trimesh objects
+    if append : Trimesh object
+    else        list of Trimesh objects
     """
     # evaluate generators so we can escape early
     faces_sequence = list(faces_sequence)
@@ -1163,7 +1167,7 @@ def submesh(mesh,
         all_faces = np.array_equal(np.sort(faces_sequence),
                                    np.arange(len(faces_sequence)))
         if all_faces:
-            log.debug('entire mesh requested, returning copy of original')
+            log.debug('entire mesh requested, returning copy')
             return mesh.copy()
 
     # avoid nuking the cache on the original mesh
@@ -1252,14 +1256,16 @@ def zero_pad(data, count, right=True):
         return np.asanyarray(data)
 
 
-def jsonify(obj):
+def jsonify(obj, **kwargs):
     """
     A version of json.dumps that can handle numpy arrays
     by creating a custom encoder for numpy dtypes.
 
     Parameters
     --------------
-    obj: JSON- serializable blob
+    obj : JSON- serializable blob
+    **kwargs :
+        Passed to json.dumps
 
     Returns
     --------------
@@ -1274,7 +1280,7 @@ def jsonify(obj):
                 return obj.tolist()
             return json.JSONEncoder.default(self, obj)
     # run the dumps using our encoder
-    dumped = json.dumps(obj, cls=NumpyEncoder)
+    dumped = json.dumps(obj, cls=NumpyEncoder, **kwargs)
     return dumped
 
 
@@ -1608,11 +1614,15 @@ def vstack_empty(tup):
     stacked: (n,d) array, with same number of columns as
               constituent arrays.
     """
+    # filter out empty arrays
     stackable = [i for i in tup if len(i) > 0]
+    # if we only have one array just return it
     if len(stackable) == 1:
-        return stackable[0]
+        return np.asanyarray(stackable[0])
+    # if we have nothing return an empty numpy array
     elif len(stackable) == 0:
         return np.array([])
+    # otherwise just use vstack as normal
     return np.vstack(stackable)
 
 

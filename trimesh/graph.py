@@ -42,41 +42,49 @@ def face_adjacency(faces=None,
 
     Parameters
     ----------
-    faces:        (n, d) int, set of faces referencing vertices by index
-    mesh:         Trimesh object, optional if passed will used cached edges
-    return_edges: bool, return the edges shared by adjacent faces
+    faces : (n, 3) int, or None
+        List of vertex indices representing triangles
+    mesh : Trimesh object
+        If passed will used cached edges instead of faces
+    return_edges : bool
+        Return the edges shared by adjacent faces
 
     Returns
     ---------
-    adjacency: (m,2) int, indexes of faces that are adjacent
-
-    if return_edges:
-         edges: (m,2) int, indexes of vertices which make up the
-                 edges shared by the adjacent faces
+    adjacency : (m,2) int
+        Indexes of faces that are adjacent
+    edges: (m,2) int
+        Only returned if return_edges is True
+        Indexes of vertices which make up the
+        edges shared by the adjacent faces
 
     Examples
     ----------
-    This is useful for lots of things, such as finding connected components:
-
-    graph = nx.Graph()
-    graph.add_edges_from(mesh.face_adjacency)
-    groups = nx.connected_components(graph_connected)
+    This is useful for lots of things such as finding
+    face- connected components:
+    >>> graph = nx.Graph()
+    >>> graph.add_edges_from(mesh.face_adjacency)
+    >>> groups = nx.connected_components(graph_connected)
     """
 
     if mesh is None:
         # first generate the list of edges for the current faces
         # also return the index for which face the edge is from
-        edges, edges_face = faces_to_edges(faces, return_index=True)
+        edges, edges_face = faces_to_edges(faces,
+                                           return_index=True)
+        # make sure edge rows are sorted
         edges.sort(axis=1)
     else:
-        # if passed a mesh, used the cached values for edges sorted
+        # if passed a mesh, used the cached values
         edges = mesh.edges_sorted
         edges_face = mesh.edges_face
 
     # this will return the indices for duplicate edges
     # every edge appears twice in a well constructed mesh
-    # so for every row in edge_idx, edges[edge_idx[*][0]] == edges[edge_idx[*][1]]
-    # in this call to group rows, we discard edges which don't occur twice
+    # so for every row in edge_idx:
+    # edges[edge_idx[*][0]] == edges[edge_idx[*][1]]
+    # in this call to group rows we discard edges which
+    # don't occur twice
     edge_groups = grouping.group_rows(edges, require_count=2)
 
     if len(edge_groups) == 0:
@@ -103,16 +111,18 @@ def face_adjacency_unshared(mesh):
 
     Parameters
     ----------
-    mesh: Trimesh object
+    mesh : Trimesh object
 
     Returns
     -----------
-    vid_unshared: (len(mesh.face_adjacency), 2) int, indexes of mesh.vertices
+    vid_unshared : (len(mesh.face_adjacency), 2) int
+        Indexes of mesh.vertices
     """
 
     # the non- shared vertex index is the same shape as face_adjacnecy
     # just holding vertex indices rather than face indices
-    vid_unshared = np.zeros_like(mesh.face_adjacency, dtype=np.int64)
+    vid_unshared = np.zeros_like(mesh.face_adjacency,
+                                 dtype=np.int64)
     # loop through both columns of face adjacency
     for i, adjacency in enumerate(mesh.face_adjacency.T):
         # faces from the current column of face adjacency
@@ -130,14 +140,16 @@ def face_adjacency_radius(mesh):
 
     Parameters
     --------------
-    mesh: Trimesh object
+    mesh : trimesh.Trimesh
 
     Returns
     -------------
-    radii: (n,) float, approximate radius between faces.
-           Parallel faces will have a value of np.inf
-    span:  (n,) float, perpendicular projection distance of two
-           unshared vertices onto the shared edge
+    radii : (len(self.face_adjacency),) float
+        Approximate radius between faces
+        Parallel faces will have a value of np.inf
+    span :  (len(self.face_adjacency),) float
+        Perpendicular projection distance of two
+        unshared vertices onto the shared edge
     """
 
     # solve for the radius of the adjacent faces
@@ -145,8 +157,8 @@ def face_adjacency_radius(mesh):
     # R = ------------------
     #     2 * sin(theta / 2)
     nonzero = mesh.face_adjacency_angles > np.radians(.01)
-    denominator = np.abs(2.0 *
-                         np.sin(mesh.face_adjacency_angles[nonzero] / 1.0))
+    denominator = np.abs(
+        2.0 * np.sin(mesh.face_adjacency_angles[nonzero] / 1.0))
 
     # consider the distance between the non- shared vertices of the
     # face adjacency pair as the key distance
@@ -177,30 +189,27 @@ def face_adjacency_radius(mesh):
 
 def vertex_adjacency_graph(mesh):
     """
-    Returns a networkx graph representing the vertices and their connections
-    in the mesh.
+    Returns a networkx graph representing the vertices and
+    their connections in the mesh.
 
     Parameters
     ----------
-    mesh:         Trimesh object
+    mesh : Trimesh object
 
     Returns
     ---------
-    graph: networkx.Graph(), graph representing vertices and edges between
-                             them,where vertices are networkx Nodes and edges
-                             are Edges.
+    graph : networkx.Graph
+        Graph representing vertices and edges between
+        them where vertices are nodes and edges are edges
 
     Examples
     ----------
     This is useful for getting nearby vertices for a given vertex,
     potentially for some simple smoothing techniques.
-
-
-    graph = mesh.vertex_adjacency_graph
-    graph.neighbors(0)
+    >>> graph = mesh.vertex_adjacency_graph
+    >>> graph.neighbors(0)
     > [1,3,4]
     """
-
     g = nx.Graph()
     g.add_edges_from(mesh.edges_unique)
     return g
@@ -246,13 +255,16 @@ def facets(mesh, engine=None):
 
     Parameters
     ---------
-    mesh:  Trimesh
-    engine: str, which graph engine to use ('scipy', 'networkx', 'graphtool')
+    mesh :  trimesh.Trimesh
+    engine : str
+       Which graph engine to use:
+       ('scipy', 'networkx', 'graphtool')
 
     Returns
     ---------
-    facets: list of groups of face indexes (mesh.faces) of parallel
-                  adjacent faces.
+    facets : sequence of (n,) int
+        Groups of face indexes of
+        parallel adjacent faces.
     """
     # what is the radius of a circle that passes through the perpendicular
     # projection of the vector between the two non- shared vertices
@@ -460,20 +472,158 @@ def connected_component_labels(edges, node_count=None):
 
     Parameters
     ----------
-    edges: (n, 2) int, edges of a graph
-    node_count: int, the largest node in the graph.
+    edges : (n, 2) int
+       Edges of a graph
+    node_count : int, or None
+        The largest node in the graph.
 
     Returns
     ---------
-    labels: (node_count,) int, component labels for each node
+    labels : (node_count,) int
+        Component labels for each node
     """
     matrix = edges_to_coo(edges, node_count)
-    body_count, labels = csgraph.connected_components(matrix,
-                                                      directed=False)
+    body_count, labels = csgraph.connected_components(
+        matrix, directed=False)
 
     assert len(labels) == node_count
 
     return labels
+
+
+def split_traversal(traversal,
+                    edges,
+                    edges_hash=None):
+    """
+    Given a traversal as a list of nodes, split the traversal
+    if a sequential index pair is not in the given edges.
+
+    Parameters
+    --------------
+    edges : (n, 2) int
+       Graph edge indexes
+    traversal : (m,) int
+       Traversal through edges
+    edge_hash : (n,)
+       Edges sorted on axis=1 and
+       passed to grouping.hashable_rows
+
+    Returns
+    ---------------
+    split : sequence of (p,) int
+    """
+    traversal = np.asanyarray(traversal,
+                              dtype=np.int64)
+
+    # hash edge rows for contains checks
+    if edges_hash is None:
+        edges_hash = grouping.hashable_rows(
+            np.sort(edges, axis=1))
+
+    # turn the (n,) traversal into (n-1,2) edges
+    trav_edge = np.column_stack((traversal[:-1],
+                                 traversal[1:]))
+    # hash each edge so we can compare to edge set
+    trav_hash = grouping.hashable_rows(
+        np.sort(trav_edge, axis=1))
+    # check if each edge is contained in edge set
+    contained = np.in1d(trav_hash, edges_hash)
+
+    # exit early if every edge of traversal exists
+    if contained.all():
+        # just reshape one traversal
+        split = [traversal]
+    else:
+        # find contiguous groups of contained edges
+        blocks = grouping.blocks(contained,
+                                 min_len=1,
+                                 only_nonzero=True)
+
+        # turn edges back in to sequence of traversals
+        split = [np.append(trav_edge[b][:, 0],
+                           trav_edge[b[-1]][1])
+                 for b in blocks]
+
+    # close traversals if necessary
+    for i, t in enumerate(split):
+        # make sure elements of sequence are numpy arrays
+        split[i] = np.asanyarray(split[i], dtype=np.int64)
+        # don't close if its a single edge
+        if len(t) <= 2:
+            continue
+        # make sure it's not already closed
+        edge = np.sort([t[0], t[-1]])
+        if edge.ptp() == 0:
+            continue
+        close = grouping.hashable_rows(edge.reshape((1, 2)))[0]
+        # if we need the edge add it
+        if close in edges_hash:
+            split[i] = np.append(t, t[0]).astype(np.int64)
+    result = np.array(split)
+
+    return result
+
+
+def fill_traversals(traversals, edges, edges_hash=None):
+    """
+    Convert a traversal of a list of edges into a sequence of
+    traversals where every pair of consecutive node indexes
+    is an edge in a passed edge list
+
+    Parameters
+    -------------
+    traversals : sequence of (m,) int
+       Node indexes of traversals of a graph
+    edges : (n, 2) int
+       Pairs of connected node indexes
+    edges_hash : None, or (n,) int
+       Edges sorted along axis 1 then hashed
+       using grouping.hashable_rows
+
+    Returns
+    --------------
+    splits : sequence of (p,) int
+       Node indexes of connected traversals
+    """
+    # make sure edges are correct type
+    edges = np.asanyarray(edges, dtype=np.int64)
+    # make sure edges are sorted
+    edges.sort(axis=1)
+
+    # if there are no traversals just return edges
+    if len(traversals) == 0:
+        return edges.copy()
+
+    # hash edges for contains checks
+    if edges_hash is None:
+        edges_hash = grouping.hashable_rows(edges)
+
+    splits = []
+    for nodes in traversals:
+        # split traversals to remove edges
+        # that don't actually exist
+        splits.extend(split_traversal(
+            traversal=nodes,
+            edges=edges,
+            edges_hash=edges_hash))
+    # turn the split traversals back into (n,2) edges
+    included = util.vstack_empty([np.column_stack((i[:-1], i[1:]))
+                                  for i in splits])
+    if len(included) > 0:
+        # sort included edges in place
+        included.sort(axis=1)
+        # make sure any edges not included in split traversals
+        # are just added as a length 2 traversal
+        splits.extend(grouping.boolean_rows(
+            edges,
+            included,
+            operation=np.setdiff1d))
+    else:
+        # no edges were included, so our filled traversal
+        # is just the original edges copied over
+        splits = edges.copy()
+
+    return splits
 
 
 def traversals(edges, mode='bfs'):
@@ -483,8 +633,8 @@ def traversals(edges, mode='bfs'):
 
     Parameters
     ------------
-    edges: (n,2) int, undirected edges of a graph
-    mode:  str, 'bfs', or 'dfs'
+    edges : (n,2) int, undirected edges of a graph
+    mode :  str, 'bfs', or 'dfs'
 
     Returns
     -----------
@@ -509,7 +659,6 @@ def traversals(edges, mode='bfs'):
     # make sure edges are sorted so we can query
     # an ordered pair later
     edges.sort(axis=1)
-
     # set of nodes to make sure we get every node
     nodes = set(edges.reshape(-1))
     # coo_matrix for csgraph routines
@@ -525,14 +674,8 @@ def traversals(edges, mode='bfs'):
         ordered = func(graph,
                        i_start=start,
                        return_predecessors=False,
-                       directed=False)
+                       directed=False).astype(np.int64)
 
-        # even if the traversal is closed there won't be an
-        # indication from the DFS, so add the first node
-        # to the end of the path
-        if np.sort(ordered[[0, -1]]) in edges:
-            ordered = np.append(ordered, ordered[0])
-        # add the traversal to our result
         traversals.append(ordered)
         # remove the nodes we've consumed
         nodes.difference_update(ordered)

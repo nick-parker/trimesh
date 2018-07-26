@@ -2,6 +2,10 @@ import numpy as np
 import networkx as nx
 
 from shapely.geometry import Polygon, Point, MultiPoint
+from shapely import vectorized
+
+import copy
+
 from rtree import Rtree
 from collections import deque
 
@@ -18,43 +22,60 @@ from .traversal import resample_path
 
 def enclosure_tree(polygons):
     """
-    Given a list of shapely polygons, which are the root (aka outermost)
-    polygons, and which represent the holes which penetrate the root
-    curve. We do this by creating an R-tree for rough collision detection,
-    and then do polygon queries for a final result
+    Given a list of shapely polygons with only exteriors,
+    find which curves represent the exterior shell or root curve
+    and which represent holes which penetrate the exterior.
+
+    This is done with an R-tree for rough overlap detection,
+    and then exact polygon queries for a final result.
 
     Parameters
     -----------
-    polygons: (n,) list of shapely.geometry.Polygon objects
+    polygons : (n,) shapely.geometry.Polygon
+       Polygons which only have exteriors and may overlap
 
     Returns
     -----------
-    roots: (m,) int, index of polygons which are root
-    contains:  networkx.DiGraph, edges indicate a polygon
-               contained by another polygon
+    roots : (m,) int
+        Index of polygons which are root
+    contains : networkx.DiGraph
+       Edges indicate a polygon is
+       contained by another polygon
     """
     tree = Rtree()
-    for i, polygon in enumerate(polygons):
-        tree.insert(i, polygon.bounds)
-    count = len(polygons)
     # nodes are indexes in polygons
     contains = nx.DiGraph()
-    # make sure every polygon is included
-    contains.add_nodes_from(np.arange(count))
-    for i in range(count):
-        if polygons[i] is None:
+    for i, polygon in enumerate(polygons):
+        # if a polygon is None it means creation
+        # failed due to weird geometry so ignore it
+        if polygon is None:
+            continue
+        # insert polygon bounds into rtree
+        tree.insert(i, polygon.bounds)
+        # make sure every valid polygon has a node
+        contains.add_node(i)
+
+    # loop through every polygon
+    for i, polygon in enumerate(polygons):
+        # if polygon creation failed ignore it
+        if polygon is None:
             continue
         # we first query for bounding box intersections from the R-tree
-        for j in tree.intersection(polygons[i].bounds):
+        for j in tree.intersection(polygon.bounds):
+            # if we are checking a polygon against itself continue
             if (i == j):
                 continue
-            # we then do a more accurate polygon in polygon test to generate
-            # the enclosure tree information
+            # do a more accurate polygon in polygon test
+            # for the enclosure tree information
             if polygons[i].contains(polygons[j]):
                 contains.add_edge(i, j)
             elif polygons[j].contains(polygons[i]):
                 contains.add_edge(j, i)
-    roots = [n for n, deg in dict(contains.in_degree()).items() if deg == 0]
+    # a root or exterior curve has no parents
+    # wrap in dict call to avoid networkx view
+    in_degree = dict(contains.in_degree())
+    roots = [n for n, deg in in_degree.items() if deg == 0]
+
     return roots, contains
 
 
@@ -155,10 +176,7 @@ def transform_polygon(polygon, matrix):
                  Polygon transformed by matrix.
 
     """
-    matrix = np.asanyarray(matrix,
-                           dtype=np.float64)
-
-    print('\n\n', matrix)
+    matrix = np.asanyarray(matrix, dtype=np.float64)
 
     if util.is_sequence(polygon):
         result = [transform_polygon(p, t)
@@ -255,53 +273,56 @@ def stack_boundaries(boundaries):
     return result
 
 
-def medial_axis(polygon, resolution=.01, clip=None):
+def medial_axis(polygon,
+                resolution=.01,
+                clip=None):
     """
-    Given a shapely polygon, find the approximate medial axis based
-    on a voronoi diagram of evenly spaced points on the boundary of the polygon.
+    Given a shapely polygon, find the approximate medial axis
+    using a voronoi diagram of evenly spaced points on the
+    boundary of the polygon.
 
     Parameters
     ----------
-    polygon:    a shapely.geometry.Polygon
-    resolution: target distance between each sample on the polygon boundary
-    clip:       [minimum number of samples, maximum number of samples]
-                specifying a very fine resolution can cause the sample count to
-                explode, so clip specifies a minimum and maximum number of samples
-                to use per boundary region. To not clip, this can be specified as:
-                [0, np.inf]
+    polygon : shapely.geometry.Polygon
+        The source geometry
+    resolution : float
+        Distance between each sample on the polygon boundary
+    clip : None, or (2,) float
+        Clip the lower and upper bound of sample count to:
+        [minimum number of samples, maximum number of samples]
+        specifying a very fine resolution can cause the sample count to
+        explode, so clip specifies a minimum and maximum number of samples
+        to use per boundary region. To not clip, this can be specified as:
+        [0, np.inf]
 
     Returns
     ----------
-    lines:     (n,2,2) set of line segments
+    medial : Path2D object
     """
     from scipy.spatial import Voronoi
-    from .entities import Line
     from .path import Path2D
+    from .io.misc import edges_to_path
 
+    # get evenly spaced points on the polygons boundaries
     samples = resample_boundaries(polygon=polygon,
                                   resolution=resolution,
                                   clip=clip)
+    # stack the boundary into a (m,2) float array
     samples = stack_boundaries(samples)
-
-    # create the voronoi diagram, after vertically stacking the points
-    # deque from a sequnce into a clean (m,2) array
+    # create the voronoi diagram on 2D points
     voronoi = Voronoi(samples)
-    # which voronoi vertices are contained inside the original polygon
-    contain = np.array([polygon.contains(Point(i))
-                        for i in voronoi.vertices],
-                       dtype=np.bool)
+    # which voronoi vertices are contained inside the polygon
+    contains = vectorized.contains(polygon, *voronoi.vertices.T)
     # ridge vertices of -1 are outside, make sure they are False
-    contain = np.append(contain, False)
-    # is a ridge fully inside the polygon
-    inside = [i for i in voronoi.ridge_vertices if contain[i].all()]
-    edges = np.vstack([util.stack_lines(i)
-                       for i in inside if len(i) >= 2])
+    contains = np.append(contains, False)
+    # make sure ridge vertices is numpy array
+    ridge = np.asanyarray(voronoi.ridge_vertices, dtype=np.int64)
+    # only take ridges where every vertex is contained
+    edges = ridge[contains[ridge].all(axis=1)]
     # line objects from edges
-    entities = [Line(points=i) for i in edges]
-
-    # create the Path2D object for the medial axis
-    medial = Path2D(entities=entities,
-                    vertices=voronoi.vertices)
+    medial = Path2D(**edges_to_path(
+        edges=edges,
+        vertices=voronoi.vertices))
 
     return medial
 
@@ -435,17 +456,18 @@ def paths_to_polygons(paths, scale=None):
 
     Parameters
     -----------
-    paths: (n,) sequence, of (m,2) float, closed paths
-    scale: float, scale of drawing
+    paths : (n,) sequence
+        Of (m,2) float, closed paths
+    scale: float
+        Approximate scale of drawing for precision
 
     Returns
     -----------
-    polys: (p,) list of shapely.geometry.Polygons
-    valid: (n,) bool, whether input path was valid:
-                        valid.sum() == p
+    polys: (p,) list
+        shapely.geometry.Polygon
+        None
     """
-    polygons = []
-    valid = np.zeros(len(paths), dtype=np.bool)
+    polygons = [None] * len(paths)
     for i, path in enumerate(paths):
         if len(path) < 4:
             # since the first and last vertices are identical in
@@ -453,13 +475,14 @@ def paths_to_polygons(paths, scale=None):
             # non-zero area
             continue
         try:
-            polygons.append(repair_invalid(Polygon(path), scale))
-            valid[i] = True
+            polygons[i] = repair_invalid(Polygon(path), scale)
         except ValueError:
             # raised if a polygon is unrecoverable
             continue
+        except BaseException:
+            log.error('unrecoverable polygon', exc_info=True)
     polygons = np.array(polygons)
-    return polygons, valid
+    return polygons
 
 
 def sample(polygon, count, factor=1.5, max_iter=10):
@@ -500,7 +523,9 @@ def sample(polygon, count, factor=1.5, max_iter=10):
         points = (points * extents) + bounds[0]
 
         # do the point in polygon test and append resulting hits
-        hit.append(np.array(polygon.intersection(MultiPoint(points))))
+        mask = vectorized.contains(polygon, *points.T)
+        hit.append(points[mask])
+
         # keep track of how many points we've collected
         hit_count += len(hit[-1])
 

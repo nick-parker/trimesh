@@ -127,7 +127,7 @@ class Path(object):
         crc: int, CRC of entity points and vertices
         """
         # first CRC the points in every entity
-        target = caching.crc32(bytes().join(e.points.tostring()
+        target = caching.crc32(bytes().join(e._bytes()
                                             for e in self.entities))
         # add the CRC for the vertices
         target += self.vertices.crc()
@@ -142,7 +142,7 @@ class Path(object):
         md5: str, two appended MD5 hashes
         """
 
-        target = util.md5_object(bytes().join(e.points.tostring()
+        target = util.md5_object(bytes().join(e._bytes()
                                               for e in self.entities))
         target += self.vertices.md5()
         return target
@@ -156,7 +156,8 @@ class Path(object):
         ---------
         paths: (n,) sequence of (*,) int referencing self.entities
         """
-        paths = traversal.closed_paths(self.entities, self.vertices)
+        paths = traversal.closed_paths(self.entities,
+                                       self.vertices)
         return paths
 
     @caching.cache_decorator
@@ -197,7 +198,8 @@ class Path(object):
 
         Returns
         ----------
-        scale: float, approximate size of the world holding this path
+        scale : float
+            Approximate size of the world holding this path
         """
         # use vertices peak-peak rather than exact extents
         scale = float((self.vertices.ptp(axis=0) ** 2).sum() ** .5)
@@ -351,9 +353,9 @@ class Path(object):
         cache = {}
         # apply transform to discretized paths
         if 'discrete' in self._cache.cache:
-            cache['discrete'] = np.array([transformations.transform_points(d,
-                                                                           matrix=transform)
-                                          for d in self.discrete])
+            cache['discrete'] = np.array([
+                transformations.transform_points(d, matrix=transform)
+                for d in self.discrete])
 
         # things we can just straight up copy
         # as they are topological not geometric
@@ -476,7 +478,8 @@ class Path(object):
         ----------
         self.entities: shortened
         """
-        valid = np.array([i.is_valid for i in self.entities], dtype=np.bool)
+        valid = np.array([i.is_valid for i in self.entities],
+                         dtype=np.bool)
         self.entities = self.entities[valid]
 
     def remove_duplicate_entities(self):
@@ -492,7 +495,7 @@ class Path(object):
         if len(unique) != len(self.entities):
             self.entities = np.array(self.entities)[unique]
 
-    @property
+    @caching.cache_decorator
     def referenced_vertices(self):
         """
         Which vertices are referenced by an entity.
@@ -550,9 +553,11 @@ class Path(object):
 
         Returns
         ---------
-        discrete: (len(self.paths),) sequence of (m*, dimension) float
+        discrete : (len(self.paths),)
+            A sequence of (m*, dimension) float
         """
-        discrete = np.array([self.discretize_path(i) for i in self.paths])
+        discrete = np.array([self.discretize_path(i)
+                             for i in self.paths])
         return discrete
 
     def export(self, file_obj=None, file_type='dict'):
@@ -596,11 +601,17 @@ class Path(object):
 
         return copied
 
-    def show(self):
-        if self.is_closed:
-            self.plot_discrete(show=True)
-        else:
-            self.plot_entities(show=True)
+    def scene(self):
+        """
+        Get a scene object containing the current Path3D object.
+
+        Returns
+        --------
+        scene: trimesh.scene.Scene object containing current path
+        """
+        from ..scene import Scene
+        scene = Scene(self)
+        return scene
 
     def __add__(self, other):
         """
@@ -641,6 +652,7 @@ class Path3D(Path):
 
         Parameters
         -----------
+<<<<<<< HEAD
         to_2D: (4,4) float
                   Homogenous transformation matrix to apply,
                   If not passed a plane will be fitted to vertices.
@@ -650,6 +662,14 @@ class Path3D(Path):
         check:  bool
                   Raise a ValueError if the points aren't coplanar
                   after being transformed.
+=======
+        to_2D: (4,4) float, transformation matrix to apply.
+                     If not passed a plane will be fitted to vertices.
+        normal: (3,) float, normal of plane which is only used if to_2D
+                      is not specified
+        check:  bool, raise a ValueError if the points aren't coplanar after
+                      being transformed
+>>>>>>> rebased_multiplane
         origin: (3,) float, point which will be mapped to (0,0) in the 2D
                      output if to_2D is not specified. If not passed defaults
                      to first vertex in path. Warning: To align different sections
@@ -664,40 +684,77 @@ class Path3D(Path):
                    Homeogenous transformation to move planar
                    back into 3D space
         """
+        # which vertices are actually referenced
+        referenced = self.referenced_vertices
+
+        # no explict transform passed
         if to_2D is None:
-            C, N = plane_fit(self.vertices)
+            # fit a plane to our vertices
+            C, N = plane_fit(self.vertices[referenced])
+            # apply the normal sign hint
             if normal is not None:
-                N *= np.sign(np.dot(N, normal))
-                N = normal
-            if origin is not None:
-                C = np.array(C)  # Without this you modify the first point in the path!
-                C += (origin - C) - N * np.dot(N, origin - C)
-            to_2D = plane_transform(C, N)
+                normal = np.asanyarray(normal, dtype=np.float64)
+                if normal.shape == (3,):
+                    N *= np.sign(np.dot(N, normal))
+                    N = normal
+                else:
+                    log.warning(
+                        "passed normal not used: {}".format(
+                            normal.shape))
+            # create a transform from fit plane to XY
+            to_2D = plane_transform(origin=C,
+                                    normal=N)
 
-        flat = transformations.transform_points(self.vertices, to_2D)
+        # make sure we've extracted a transform
+        to_2D = np.asanyarray(to_2D, dtype=np.float64)
+        if to_2D.shape != (4, 4):
+            raise ValueError('unable to create transform!')
 
-        if check and np.any(np.std(flat[:, 2]) > tol.planar):
-            log.error('points have z with deviation %f', np.std(flat[:, 2]))
-            raise NameError('Points aren\'t planar!')
+        # transform all vertices to 2D plane
+        flat = transformations.transform_points(self.vertices,
+                                                to_2D)
 
-        planar = Path2D(entities=copy.deepcopy(self.entities),
-                        vertices=flat[:, 0:2],
-                        metadata=copy.deepcopy(self.metadata))
+        # Z values of vertices which are referenced
+        heights = flat[referenced][:, 2]
+        # points are not on a plane because Z varies
+        if heights.ptp() > tol.planar:
+            # since Z is inconsistent set height to zero
+            height = 0.0
+            if check:
+                raise ValueError('points are not flat!')
+        else:
+            # if the points were planar store the height
+            height = heights.mean()
+        # the transform from 2D to 3D
         to_3D = np.linalg.inv(to_2D)
 
+        # if the transform didn't move the path to
+        # exactly Z=0 adjust it so the returned transform does
+        if np.abs(height) > tol.planar:
+            # adjust to_3D transform by height
+            adjust = transformations.translation_matrix(
+                [0, 0, height])
+            # apply the height adjustment to_3D
+            to_3D = np.dot(to_3D, adjust)
+
+            # do a check on to_3D
+            # flat[:,2] = 0
+            # a = transformations.transform_points(flat[referenced],
+            #                                     to_3D)
+            # assert np.allclose(self.vertices[referenced], a)
+
+        # copy metadata to new object
+        metadata = copy.deepcopy(self.metadata)
+        # store transform we used to move it onto the plane
+        metadata['to_3D'] = to_3D
+
+        # create the Path2D with the same entities
+        # and XY values of vertices projected onto the plane
+        planar = Path2D(entities=copy.deepcopy(self.entities),
+                        vertices=flat[:, :2],
+                        metadata=metadata)
+
         return planar, to_3D
-
-    def scene(self):
-        """
-        Get a scene object containing the current Path3D object.
-
-        Returns
-        --------
-        scene: trimesh.scene.Scene object containing current path
-        """
-        from ..scene import Scene
-        scene = Scene(self)
-        return scene
 
     def show(self):
         """
@@ -707,11 +764,12 @@ class Path3D(Path):
 
     def plot_discrete(self, show=False):
         """
-        Plot the discrete closed curves.
+        Plot closed curves
 
         Parameters
         ------------
-        show:
+        show : bool
+           If False will not execute matplotlib.pyplot.show
         """
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D
@@ -723,6 +781,15 @@ class Path3D(Path):
             plt.show()
 
     def plot_entities(self, show=False):
+        """
+        Plot discrete version of entities without regards
+        for connectivity.
+
+        Parameters
+        -------------
+        show : bool
+           If False will not execute matplotlib.pyplot.show
+        """
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D
         fig = plt.figure()
@@ -736,7 +803,19 @@ class Path3D(Path):
 
 class Path2D(Path):
 
+    def show(self):
+        """
+        Plot the current Path2D object using matplotlib.
+        """
+        if self.is_closed:
+            self.plot_discrete(show=True)
+        else:
+            self.plot_entities(show=True)
+
     def _process_functions(self):
+        """
+        Return a list of functions to clean up a Path2D
+        """
         return [self.merge_vertices,
                 self.remove_duplicate_entities,
                 self.remove_unreferenced_vertices]
@@ -833,10 +912,18 @@ class Path2D(Path):
         -------------
         transform : (4, 4) float
             If passed, will transform vertices.
+            If not passed and 'to_3D' is in metadata
+            that transform will be used.
+
         Returns
         -----------
         path_3D: Path3D version of current path
         """
+        # if there is a stored 'to_3D' transform in metadata use it
+        if transform is None and 'to_3D' in self.metadata:
+            transform = self.metadata['to_3D']
+
+        # copy vertices and stack with zeros from (n, 2) to (n, 3)
         vertices = np.column_stack((copy.deepcopy(self.vertices),
                                     np.zeros(len(self.vertices))))
         if transform is not None:
@@ -861,8 +948,8 @@ class Path2D(Path):
         polygons_closed: (n,) list of shapely.geometry.Polygon objects
         """
         # will attempt to recover invalid garbage geometry
-        polys, valid = polygons.paths_to_polygons(self.discrete)
-        self._cache['path_valid'] = valid
+        # and will be None if geometry is unrecoverable
+        polys = polygons.paths_to_polygons(self.discrete)
         return polys
 
     @caching.cache_decorator
@@ -873,17 +960,27 @@ class Path2D(Path):
 
         Returns
         ---------
-        full: list of shapely.geometry.Polygon objects
+        full : (len(self.root),) shapely.geometry.Polygon
+            Polygons containing interiors
         """
-        full = [None] * len(self.enclosure_shell)
-        for i, (shell_index,
-                holes_index) in enumerate(self.enclosure_shell.items()):
-            # a list of multiple Polygon objects
-            holes_poly = self.polygons_closed[holes_index]
+        # pre- allocate the list to avoid indexing problems
+        full = [None] * len(self.root)
+        # store the graph to avoid cache thrashing
+        enclosure = self.enclosure_directed
+        # loop through root curves
+        for i, root in enumerate(self.root):
+            # a list of multiple Polygon objects that
+            # are fully contained by the root curve
+            children = [self.polygons_closed[child]
+                        for child in enclosure[root].keys()]
             # all polygons_closed are CCW, so for interiors reverse them
-            holes = [np.array(p.exterior.coords)[::-1] for p in holes_poly]
+            holes = [np.array(p.exterior.coords)[::-1] for p in children]
             # a single Polygon object
-            shell = self.polygons_closed[shell_index].exterior
+            try:
+                shell = self.polygons_closed[root].exterior
+            except BaseException:
+                from IPython import embed
+                embed()
             # create a polygon with interiors
             full[i] = polygons.repair_invalid(Polygon(shell=shell,
                                                       holes=holes))
@@ -950,7 +1047,8 @@ class Path2D(Path):
     def medial_axis(self, resolution=None, clip=None):
         """
         Find the approximate medial axis based
-        on a voronoi diagram of evenly spaced points on the boundary of the polygon.
+        on a voronoi diagram of evenly spaced points on the
+        boundary of the polygon.
 
         Parameters
         ----------
@@ -963,7 +1061,7 @@ class Path2D(Path):
 
         Returns
         ----------
-        medial:     Path2D object
+        medial : Path2D object
         """
         if resolution is None:
             resolution = self.scale / 1000.0
@@ -1033,41 +1131,7 @@ class Path2D(Path):
         ----------
         split: (n,) list of Path2D objects
         """
-        if self.root is None or len(self.root) == 0:
-            split = []
-        else:
-            split = [None] * len(self.root)
-            for i, root in enumerate(self.root):
-                connected = self.connected_paths(root, include_self=True)
-
-                new_root = np.nonzero(connected == root)[0]
-                new_entities = collections.deque()
-                new_paths = collections.deque()
-                new_metadata = copy.deepcopy(self.metadata)
-                new_metadata['split_2D'] = i
-
-                for path in self.paths[self.path_valid][connected]:
-                    new_paths.append(np.arange(len(path)) + len(new_entities))
-                    new_entities.extend(path)
-                new_entities = np.array(new_entities)
-
-                assert len(new_paths) == len(connected)
-
-                # prevents the copying from nuking our cache
-                with self._cache:
-                    split[i] = Path2D(
-                        entities=copy.deepcopy(
-                            self.entities[new_entities]), vertices=copy.deepcopy(
-                            self.vertices), metadata=new_metadata)
-                    split[i]._cache.update(
-                        {'paths': np.array(new_paths),
-                         'polygons_closed': self.polygons_closed[connected],
-                         'path_valid': np.ones(len(new_paths), dtype=np.bool),
-                         'discrete': self.discrete[self.path_valid][connected],
-                         'root': new_root})
-        [i._cache.id_set() for i in split]
-        self._cache.id_set()
-        return np.array(split)
+        return traversal.split(self)
 
     def plot_discrete(self, show=False):
         """
@@ -1135,8 +1199,9 @@ class Path2D(Path):
         path_valid: (n,) bool, indexes of self.paths self.polygons_closed
                          which are valid polygons
         """
-        exists = self.polygons_closed
-        return self._cache['path_valid']
+        valid = [i is not None for i in self.polygons_closed]
+        valid = np.array(valid, dtype=np.bool)
+        return valid
 
     @caching.cache_decorator
     def root(self):

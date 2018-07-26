@@ -152,9 +152,9 @@ def faces_to_path(mesh, face_ids=None, **kwargs):
     unique_edges = grouping.group_rows(edges,
                                        require_count=1)
 
-    # generate path traversals from the edges
     kwargs.update(edges_to_path(edges=edges[unique_edges],
                                 vertices=mesh.vertices))
+
     return kwargs
 
 
@@ -174,7 +174,11 @@ def edges_to_path(edges, vertices, **kwargs):
     """
     # sequence of ordered traversals
     dfs = graph.traversals(edges, mode='dfs')
-
-    kwargs.update({'entities': [Line(d) for d in dfs],
+    # make sure every consecutive index in DFS
+    # traversal is an edge in the source edge list
+    dfs_connected = graph.fill_traversals(dfs, edges=edges)
+    # kwargs for Path constructor
+    # turn traversals into Line objects
+    kwargs.update({'entities': [Line(d) for d in dfs_connected],
                    'vertices': vertices})
     return kwargs

@@ -3,57 +3,122 @@ try:
 except BaseException:
     import generic as g
 
+from math import sin, cos, pi
+import numpy as np
 
 class SectionTest(g.unittest.TestCase):
 
-    def test_section(self):
+    def check_normal(self, plane_normal):
         mesh = g.get_mesh('featuretype.STL')
         # this hits many edge cases
         step = .125
+        # step through mesh
         z_levels = g.np.arange(start=mesh.bounds[0][2],
                                stop=mesh.bounds[1][2] + 2 * step,
                                step=step)
-        sections = [None] * len(z_levels)
+        # randomly order Z so first level is probably not zero
+        z_levels = g.np.random.permutation(z_levels)
 
-        for index, z in enumerate(z_levels):
-            plane_origin = [0, 0, z]
-            plane_normal = [0, 0, 1]
+        # rotate around so we're not just testing XY parallel planes
+        for angle in [0.0, g.np.radians(1.0), g.np.radians(11.11232)]:
+            # arbitrary test rotation axis
+            axis = g.trimesh.unitize([1.0, 2.0, .32343])
+            # rotate plane around axis to test along non- parallel planes
+            base = g.trimesh.transformations.rotation_matrix(angle=angle,
+                                                             direction=axis)
+            # to return to parallel to XY plane
+            base_inv = g.np.linalg.inv(base)
 
-            section = mesh.section(plane_origin=plane_origin,
-                                   plane_normal=plane_normal)
-            if section is None:
-                # section will return None if the plane doesn't
-                # intersect the mesh
-                assert z > (mesh.bounds[1][2] -
-                            g.trimesh.constants.tol.merge)
-                continue
+            # transform normal to be slightly rotated
+            plane_normal = g.trimesh.transform_points([[0, 0, 1.0]],
+                                                      base,
+                                                      translate=False)[0]
 
-            planar, to_3D = section.to_planar()
-            assert planar.is_closed
-            assert (len(planar.polygons_full) > 0)
-            sections[index] = planar
+            # store Path2D and Path3D results
+            sections = [None] * len(z_levels)
+            sections_3D = [None] * len(z_levels)
 
-        # try getting the sections as Path2D through
-        # the multiplane method
-        paths = mesh.section_multiplane(plane_origin=[0, 0, 0],
-                                        plane_normal=[0, 0, 1],
-                                        heights=z_levels)
+            for index, z in enumerate(z_levels):
+                # move origin into rotated frame
+                plane_origin = [0, 0, z]
+                plane_origin = g.trimesh.transform_points(
+                    [plane_origin], base)[0]
 
-        # call the multiplane method directly
-        lines, faces, T = g.trimesh.intersections.mesh_multiplane(
-            mesh=mesh,
-            plane_origin=[0, 0, 0],
-            plane_normal=[0, 0, 1],
-            heights=z_levels)
+                section = mesh.section(plane_origin=plane_origin,
+                                       plane_normal=plane_normal)
 
-        # make sure various methods return the same results
-        for index in range(len(z_levels)):
-            if sections[index] is None:
-                assert len(lines[index]) == 0
-                continue
-            rc = g.trimesh.load_path(lines[index])
-            assert g.np.isclose(rc.area, sections[index].area)
-            assert g.np.isclose(rc.area, paths[index].area)
+                if section is None:
+                    # section will return None if the plane doesn't
+                    # intersect the mesh
+                    # assert z > (mesh.bounds[1][2] -
+                    #            g.trimesh.constants.tol.merge)
+                    continue
+
+                # move back
+                section.apply_transform(base_inv)
+
+                # Z should be in plane frame
+                assert g.np.allclose(section.vertices[:, 2], z)
+
+                planar, to_3D = section.to_planar()
+                assert planar.is_closed
+                assert (len(planar.polygons_full) > 0)
+                sections[index] = planar
+                sections_3D[index] = section
+
+            # try getting the sections as Path2D through
+            # the multiplane method
+            paths = mesh.section_multiplane(plane_origin=[0, 0, 0],
+                                            plane_normal=plane_normal,
+                                            heights=z_levels)
+
+            # call the multiplane method directly
+            lines, faces, T = g.trimesh.intersections.mesh_multiplane(
+                mesh=mesh,
+                plane_origin=[0, 0, 0],
+                plane_normal=plane_normal,
+                heights=z_levels)
+
+            # make sure various methods return the same results
+            for index in range(len(z_levels)):
+                if sections[index] is None:
+                    assert len(lines[index]) == 0
+                    # make sure mesh.multipath_section is the same
+                    assert paths[index] is None
+                    continue
+                # reconstruct path from line segments
+                rc = g.trimesh.load_path(lines[index])
+
+                assert g.np.isclose(rc.area, sections[index].area)
+                assert g.np.isclose(rc.area, paths[index].area)
+
+                # send Path2D back to 3D using the transform returned by
+                # section
+                back_3D = paths[index].to_3D(paths[index].metadata['to_3D'])
+                # move to parallel test plane
+                back_3D.apply_transform(base_inv)
+
+                # make sure all vertices have constant Z
+                assert back_3D.vertices[:, 2].ptp() < 1e-8
+                assert sections_3D[index].vertices[:, 2].ptp() < 1e-8
+
+                # make sure reconstructed 3D section is at right height
+                assert g.np.isclose(back_3D.vertices[:, 2].mean(),
+                                    sections_3D[index].vertices[:, 2].mean())
+
+                # make sure reconstruction is at z of frame
+                assert g.np.isclose(back_3D.vertices[:, 2].mean(),
+                                    z_levels[index])
+
+    def test_section(self):
+        """
+        Test section algorithm with slices in several directions.
+        """
+        d = 4
+        normals = [[sin(phi*pi/4)*sin(theta*pi/d), sin(phi*pi/d)*cos(theta*pi/d), cos(phi*pi/d)]
+                   for theta in range(0, d*2) for phi in range(0, d)]
+        for plane_normal in normals:
+            self.check_normal(plane_normal)
 
 
 class PlaneLine(g.unittest.TestCase):
