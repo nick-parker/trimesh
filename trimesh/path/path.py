@@ -639,10 +639,7 @@ class Path3D(Path):
                 self.generate_closed_paths,
                 self.generate_discrete]
 
-    def to_planar(self,
-                  to_2D=None,
-                  normal=None,
-                  check=True):
+    def to_planar(self, to_2D=None, normal=None, check=True, origin=None):
         """
         Check to see if current vectors are all coplanar.
 
@@ -651,16 +648,17 @@ class Path3D(Path):
 
         Parameters
         -----------
-        to_2D: (4,4) float
-            Homogenous transformation matrix to apply,
-            If not passed a plane will be fitted to vertices.
-        normal: (3,) float, or None
-           Approximate normal of direction of plane
-           If to_2D is not specified sign
-           will be applied to fit plane normal
-        check:  bool
-            If True: Raise a ValueError if
-            points aren't coplanar
+        to_2D: (4,4) float, transformation matrix to apply.
+                     If not passed a plane will be fitted to vertices.
+        normal: (3,) float, normal of plane which is only used if to_2D
+                      is not specified
+        check:  bool, raise a ValueError if the points aren't coplanar after
+                      being transformed
+        origin: (3,) float, point which will be mapped to (0,0) in the 2D
+                     output if to_2D is not specified. If not passed defaults
+                     to first vertex in path. Warning: To align different sections
+                     with this. Otherwise some sections might be mirrored across
+                     the origin.
 
         Returns
         -----------
@@ -711,7 +709,6 @@ class Path3D(Path):
         else:
             # if the points were planar store the height
             height = heights.mean()
-
         # the transform from 2D to 3D
         to_3D = np.linalg.inv(to_2D)
 
