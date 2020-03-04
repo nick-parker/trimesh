@@ -702,6 +702,8 @@ class Path3D(Path):
                         "passed normal not used: {}".format(
                             normal.shape))
             # create a transform from fit plane to XY
+            if origin is not None:
+                C = origin
             to_2D = plane_transform(origin=C,
                                     normal=N)
 
@@ -780,7 +782,7 @@ class Path3D(Path):
         if show:
             plt.show()
 
-    def plot_entities(self, show=False):
+    def plot_entities(self, show=False, title=None):
         """
         Plot discrete version of entities without regards
         for connectivity.
@@ -794,6 +796,8 @@ class Path3D(Path):
         from mpl_toolkits.mplot3d import Axes3D
         fig = plt.figure()
         axis = fig.add_subplot(111, projection='3d')
+        if title is not None:
+            plt.title(title)
         for entity in self.entities:
             vertices = entity.discrete(self.vertices)
             axis.plot(*vertices.T)
